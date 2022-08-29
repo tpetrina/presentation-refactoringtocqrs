@@ -1,11 +1,12 @@
-import { Notes, Image } from 'mdx-deck';
-import { future, hack, dark, swiss } from 'mdx-deck/themes';
-import { CodeSurfer } from 'mdx-deck-code-surfer';
-import shadesOfPurple from 'prism-react-renderer/themes/shadesOfPurple';
-import nightOwl from 'prism-react-renderer/themes/nightOwl';
-import duotoneLight from 'prism-react-renderer/themes/duotoneLight';
+import { Notes, Image } from "mdx-deck";
+import { future, hack, dark, swiss } from "mdx-deck/themes";
+import { CodeSurfer } from "mdx-deck-code-surfer";
+import shadesOfPurple from "prism-react-renderer/themes/shadesOfPurple";
+import nightOwl from "prism-react-renderer/themes/nightOwl";
+import duotoneLight from "prism-react-renderer/themes/duotoneLight";
+import Title from "./components/title";
 
-export { components } from 'mdx-deck-code-surfer';
+export { components } from "mdx-deck-code-surfer";
 
 export const theme = {
   //...dark,
@@ -19,46 +20,84 @@ export const theme = {
 
 # Refactoring to CQRS
 
-[presentation-refactoringtocqrs.netlify.com](presentation-refactoringtocqrs.netlify.com)
+<Title title="Reactoring to CQRS" />
+
+[cqrs-kulendayz.tpetrina.dev](https://cqrs-kulendayz.tpetrina.dev/)
 
 ---
 
 ### About me 👋
 
 - Toni Petrina
-- Visma e-conomic
+- SRE @ Visma e-conomic
 - github.com/tpetrina
-- @to_pe
+- @tonipetrina1
 
 ---
 
 # What is CQRS?
 
----
+Command Query Responsibility Segregation
 
-## Command Query Responsibility Segregation
-
----
-
-<p>Or in its weaker form <code>Command Query Segregation</code> (CQS)</p>
+<p>
+  Or in its weaker form <code>Command Query Segregation</code> (CQS)
+</p>
 
 ---
 
-Main idea: separate commands (operations that change data) from queries (operations that read data).
+# Simply put
 
-Can be done at:
+- separate commands (operations that change data) from queries (operations that read data).
+
+## Can be done at:
 
 - code level - requires diligence (sometimes libraries can help)
 - architecture level - harder, but more benefits
 
 ---
 
+# How we do it today?
+
+- "Services" mix read and write operations
+- GETs that modify (referential transparency)
+- Lack of common interface between "operations"
+
+---
+
+# An aside
+
+In n-tier architecture, operations are clustered - all operations on User go in `UserService` and `UserRepository`
+
+Hard to do higher-order operations e.g. decorators.
+
+---
+
+```clike
+// No similarity between methods
+public class UserService {
+  public UserDto GetUser(int id) {}
+  public IEnumerable<UserDto> GetUsers(int id) {}
+}
+
+
+
+public class OrganizationService {
+  // No similarity between this and GetUser
+  public OrganizationDto GetOrganization(Guid id) {}
+}
+----
+* > An aside - example
+3:5 > Signature difference
+3,11 > Signature difference
+```
+
+---
+
 ## Motivation
 
 - In CRUD domain entites are resources
-- All operations have same "value"
 - Most UIs are task based and expressive, REST is not (but RPC is)
-- REST is incompatible with task based approach
+- REST is incompatible with task based approach (but RESTful isn't)
 
 ---
 
@@ -95,6 +134,7 @@ class UserController
 - Services have generic interface
 - Database have generic mapping (generic repository pattern)
 - Which leads to anemic domains and lots of boilerplate
+- Services, repositories and controllers are too similar, but can't be unified (role vs header interface)
 
 ---
 
@@ -109,7 +149,7 @@ class UserController
 
 ---
 
-CQRS is often combined with:
+# CQRS is often combined with:
 
 - DDD - why aren't you using it anyway?
 - Event Sourcing - beyond the scope
@@ -121,37 +161,38 @@ CQRS is often combined with:
 ---
 
 ```clike
-class ChangeEmailDto
-{
-  string NewEmail { get; set; }
-}
+record ChangeEmailDto(string NewEmail);
 
-class UserController
-{
+// new
+class UserController {
   [HttpPost("change-email")]
-  ActionResult<bool> ChangeEmail(ChangeEmailDto dto)
-  {
+  ActionResult<bool> ChangeEmail(ChangeEmailDto dto) {
     return _userService.ChangeEmail(dto);
   }
 }
+
+
+// vs
+class UserController {
+  [HttpPut("user/{id}")]
+  ActionResult<Unit> UpdateUser(UserDto) { /* */ }
+}
 ----
 * > Semantic actions
-1:4 > Intention in name and data
-8:12 > Semantic action - quite obvious
+1 > Intention in name and data
+5:8 > Semantic action - quite obvious
 ```
 
 ---
 
 ```clike
-interface IUserService
-{
+interface IUserService {
   /* */
   bool ChangeEmail(ChangeEmailDto dto);
   /* */
 }
 
-class UserService : IUserService
-{
+class UserService : IUserService {
   /* */
 
   bool ChangeEmail(ChangeEmailDto dto)
@@ -163,8 +204,27 @@ class UserService : IUserService
 }
 ----
 * > Implementation in the service layer
-1:6 > Our interface keeps growing
-10:15 > Our method stands out a bit
+1:5 > Our interface keeps growing
+8:13 > Our method stands out a bit
+```
+
+---
+
+```clike
+class UserService {
+  UserService(
+    IUserRepository userRepository,
+    IEmailService emailService,
+    IStorage storage
+  ) {}
+
+  bool UpdateInfo() { /* */ }
+  bool ChangeEmail() { /* */ }
+  bool UploadAvatar() { /* */ }
+  bool RemoveAvatar() { /* */ }
+}
+----
+* > Explosion of dependencies
 ```
 
 ---
@@ -209,9 +269,9 @@ class ChangeEmailCommand
 
 ```clike
 // and the handler
-class ChangeEmailCommandHandler
+class ChangeEmailHandler
 {
-  ChangeEmailCommandHandler(
+  ChangeEmailHandler(
     /* dependencies */
   )
   {}
@@ -239,7 +299,7 @@ interface IUserService
 
 // =>
 
-class ChangeEmailCommandHandler
+class ChangeEmailHandler
 {
   bool Execute(ChangeEmailCommand command) { /* */ }
 }
@@ -261,7 +321,7 @@ interface ICommandHandler<TCommand>
 }
 
 // our implementation
-class ChangeEmailCommandHandler
+class ChangeEmailHandler
   : ICommandHandler<ChangeEmailCommand>
 {
   bool Execute(ChangeEmailCommand command) { /* */ }
@@ -280,8 +340,8 @@ class UserController
 {
   [HttpPost("change-email")]
   ActionResult<bool> ChangeEmail(
-    [FromBody]     ChangeEmailDto            dto,
-    [FromServices] ChangeEmailCommandHandler handler)
+    [FromBody]     ChangeEmailDto     dto,
+    [FromServices] ChangeEmailHandler handler)
   {
     var command = new ChangeEmailCommand(CurrentUser, dto.NewEmail);
     return handler(command);
@@ -328,8 +388,8 @@ class UserController
 
 ## Some design decisions
 
-- Naming: `Execute`, `Handle`
-- Return type: `void`, `Task`, `Task<Either<Error, Result>>`
+- Naming: `Execute`, `Handle`, `Do`, `_`
+- Return type: `void`, `Task`, `Task<Either<Error, Unit>>`, `Task<Result>`
 - Manual construction of handlers vs DI
 
 ---
@@ -369,16 +429,25 @@ class UserRepository
 ---
 
 ```clike
-class UserRepository
-{
+class UserRepository {
   // for HttpGet
   // mapping required, not all data needs to be present
+  // /user/1
+  // or as a lookup
   UserDto GetUser();
 
   // enriching (JOINs)
+  // /me
   UserDtoWithNotifications GetUserWithNotifications();
 
   /* */
+}
+
+public class UserDto {
+  int Id { get; }
+  string Name { get; }
+  // have fun with nullable
+  IEnumerable<UserNotificationDto>? Notifications { get; }
 }
 ----
 * > Not all reads are equal
@@ -392,6 +461,8 @@ class UserRepository
   // specification is custom for each repository
   // combinatorial explosion
   // lack of predictability
+  // tedious to implement
+  // might as well switch to IQueryable
   UserDto[] GetUsers(UserSpecification specification);
 }
 ----
@@ -420,26 +491,36 @@ class UserRepository
 
 ---
 
+# Recap - read models
+
+- Hydrate for command
+- Lookup data for command handler (validation or reference)
+- A view for UI or report
+- Admin view (for all) vs user view (for me) - multi-tenant scenarios
+
+---
+
 ## Query objects are powerful
 
 - Avoid using domain model completely!
 - Can use raw SQL (or Dapper as opposed to EF in the command model)
+  - Use views!
 - Caching can be done only for this layer
 
 ---
 
 ```clike
-class GetActiveUsersQuery
-  : IQuery<GetActiveUsersResult>
-{}
+record GetActiveUsersResult();
 
-class GetActiveUsersQueryHandler
+record GetActiveUsersQuery : IQuery<GetActiveUsersResult>;
+
+class GetActiveUsersHandler
   : IQueryHandler<GetActiveUsersQuery, GetActiveUsersResult>
 {
   // use Dapper
   IConnection connection;
 
-  GetActiveUsersQuery(IConnection connection)
+  GetActiveUsersHandler(IConnection connection)
     => this.connection = connection;
 
   GetActiveUsersResult Execute(GetActiveUsersQuery query)
@@ -450,7 +531,7 @@ class GetActiveUsersQueryHandler
 }
 ----
 * > An example query
-2 > Declare the return type
+3 > Declare the return type
 5:6 > Handler specifies both input and output
 8:12 > Use Dapper for higher performance
 14:18 > Raw SQL to avoid ORM
@@ -472,11 +553,11 @@ Separating databases
 
 ---
 
-<img src="architecture_classic.png" style={{ width: '80%' }} />
+<img src="architecture_classic.png" style={{ width: "80%" }} />
 
 ---
 
-<img src="architecture_split.png" style={{ width: '80%' }} />
+<img src="architecture_split.png" style={{ width: "80%" }} />
 
 ---
 
@@ -528,7 +609,7 @@ class TestUsers
   void User__CanChangeEmail()
   {
     // Arrange
-    var handler = new ChangeEmailCommandHandler();
+    var handler = new ChangeEmailHandler();
     var command = new ChangeEmailCommand(1, "new@email.com");
 
     // Act
@@ -639,7 +720,7 @@ class EFTransactionHandler<TCommand>
 ```clike
 var handler = new EFTransactionHandler<ChangeEmailCommand>(
   _context,
-  new ChangeEmailCommandHandler(/* ... */)
+  new ChangeEmailHandler(/* ... */)
 );
 ----
 * > Example usage
@@ -665,11 +746,11 @@ var handler = new EFTransactionHandler<ChangeEmailCommand>(
 
 ---
 
-Questions?
-
----
+# Questions?
 
 Thank you!
 
 - Toni Petrina
-- @to_pe
+- @tonipetrina1
+
+[cqrs-kulendayz.tpetrina.dev](https://cqrs-kulendayz.tpetrina.dev/)
